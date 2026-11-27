@@ -14,19 +14,19 @@ on:
       patch_url:
         description: "URL патча credits-park для 3.8.51"
         required: false
-        default: "https://files.catbox.moe/wv638j.patch"
+        default: "https://files.catbox.moe/moul5z.patch"
       patch_sha256:
         description: "sha256 патча"
         required: false
-        default: "0f551d4aab5b5a517ed2beae66ebe49be860306ca5f4533355d28ccefa3b0299"
+        default: "8f08c5b58710304470da9147de2d22b278341e5c0ad42318d3dad7510348ab17"
       image_tag:
         description: "тег образа в ghcr"
         required: false
-        default: "credits-park"
+        default: "credits-park-v33"
 
 env:
-  PATCH_URL: ${{ github.event.inputs.patch_url || 'https://files.catbox.moe/wv638j.patch' }}
-  PATCH_SHA256: ${{ github.event.inputs.patch_sha256 || '0f551d4aab5b5a517ed2beae66ebe49be860306ca5f4533355d28ccefa3b0299' }}
+  PATCH_URL: ${{ github.event.inputs.patch_url || 'https://files.catbox.moe/moul5z.patch' }}
+  PATCH_SHA256: ${{ github.event.inputs.patch_sha256 || '8f08c5b58710304470da9147de2d22b278341e5c0ad42318d3dad7510348ab17' }}
 
 jobs:
   test:
@@ -57,9 +57,6 @@ jobs:
         with:
           node-version: "24"
           cache: npm
-
-      - name: install
-        run: npm ci --no-audit --no-fund --legacy-peer-deps
 
       - name: run the suites
         run: |
@@ -96,6 +93,7 @@ jobs:
         run: |
           git apply /tmp/credits-park.patch
           grep -q "isGlmNoCodingPlanMessage" open-sse/services/usage/glm.ts
+          grep -q '"glm-5.4"' open-sse/config/glmProvider.ts
 
       - uses: docker/setup-buildx-action@v3
 
@@ -111,7 +109,12 @@ jobs:
           file: ./Dockerfile
           target: runner-base
           push: true
-          tags: ghcr.io/${{ github.repository_owner }}/omniroute:${{ github.event.inputs.image_tag || 'credits-park' }}
+          # 2 воркера Turbopack ≈ 2×4.5 ГБ RSS — на shared 16GB-раннере это уже
+          # дважды упало ResourceExhausted (09:1xZ, 10:1xZ). 1 воркер медленнее,
+          # но детерминированно проходит.
+          build-args: |
+            OMNIROUTE_BUILD_WORKERS=1
+          tags: ghcr.io/${{ github.repository_owner }}/omniroute:${{ github.event.inputs.image_tag || 'credits-park-v33' }}
           cache-from: type=gha,scope=runner-base
           cache-to: type=gha,scope=runner-base,mode=max
           provenance: false
