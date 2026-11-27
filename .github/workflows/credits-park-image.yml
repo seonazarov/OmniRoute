@@ -113,10 +113,14 @@ jobs:
           target: runner-base
           push: true
           # 2 воркера Turbopack ≈ 2×4.5 ГБ RSS — на shared 16GB-раннере это уже
-          # дважды упало ResourceExhausted (09:1xZ, 10:1xZ). 1 воркер медленнее,
-          # но детерминированно проходит.
+          # дважды упало ResourceExhausted (09:1xZ, 10:1xZ). Даже 1 воркер (10:30Z,
+          # 6fe5019d) упал тем же: Turbopack ~=4.5 ГБ нативного RSS на процесс и heap-cap
+          # на него не действует (комментарий в Dockerfile #7518).Webpack держит всё
+          # в V8-кучах (5120 МБ на процесс x2) — медленнее, но предсказуемо.
           build-args: |
             OMNIROUTE_BUILD_WORKERS=1
+            OMNIROUTE_USE_TURBOPACK=0
+            OMNIROUTE_BUILD_MEMORY_MB=5120
           tags: ghcr.io/${{ github.repository_owner }}/omniroute:${{ github.event.inputs.image_tag || 'credits-park-v33' }}
           cache-from: type=gha,scope=runner-base
           cache-to: type=gha,scope=runner-base,mode=max
