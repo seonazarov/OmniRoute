@@ -1,0 +1,117 @@
+name: credits-park-image
+
+# Собирает образ 3.8.51 + credits-park (парковка credits_exhausted, честный
+# бейдж плана GLM) и публикует его в ghcr на встроенном GITHUB_TOKEN.
+# Патч проверяется по sha256 перед применением, сборка gating-ится юнит-тестами.
+
+on:
+  push:
+    branches: [credits-park]
+    paths:
+      - .github/workflows/credits-park-image.yml
+  workflow_dispatch:
+    inputs:
+      patch_url:
+        description: "URL патча credits-park для 3.8.51"
+        required: false
+        default: "https://files.catbox.moe/wv638j.patch"
+      patch_sha256:
+        description: "sha256 патча"
+        required: false
+        default: "0f551d4aab5b5a517ed2beae66ebe49be860306ca5f4533355d28ccefa3b0299"
+      image_tag:
+        description: "тег образа в ghcr"
+        required: false
+        default: "credits-park"
+
+env:
+  PATCH_URL: ${{ github.event.inputs.patch_url || 'https://files.catbox.moe/wv638j.patch' }}
+  PATCH_SHA256: ${{ github.event.inputs.patch_sha256 || '0f551d4aab5b5a517ed2beae66ebe49be860306ca5f4533355d28ccefa3b0299' }}
+
+jobs:
+  test:
+    name: unit suites touched by the patch
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: fetch and verify patch
+        run: |
+          curl -fsSL --retry 3 -o /tmp/credits-park.patch "$PATCH_URL"
+          echo "$PATCH_SHA256  /tmp/credits-park.patch" | sha256sum -c -
+
+      - name: apply patch and assert markers
+        run: |
+          git apply --check /tmp/credits-park.patch
+          git apply /tmp/credits-park.patch
+          grep -q "isGlmNoCodingPlanMessage"      open-sse/services/usage/glm.ts
+          grep -q "probeGlmPersonalSubscription"  open-sse/services/usage/glm.ts
+          grep -q "CREDITS_EXHAUSTED_PARK_MS"     src/lib/quota/planEntitlement.ts
+          grep -q "needsEntitlementCheck"         src/lib/quota/connectionRecovery.ts
+          grep -q 'entitlement?: "none"'          src/lib/db/providerLimits.ts
+          grep -q 'next.entitlement !== "none"'   src/lib/usage/providerLimitsCache.ts
+          echo "маркеры патча на месте"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: install
+        run: npm ci --no-audit --no-fund --legacy-peer-deps
+
+      - name: run the suites
+        run: |
+          npx cross-env DISABLE_SQLITE_AUTO_BACKUP=true \
+            node --max-old-space-size=8192 --import tsx/esm \
+            --import ./open-sse/utils/setupPolyfill.ts \
+            --import ./tests/_setup/isolateDataDir.ts \
+            --test --test-force-exit --test-concurrency=2 \
+            tests/unit/usage-glm-no-plan.test.ts \
+            tests/unit/provider-limits-no-plan-badge.test.ts \
+            tests/unit/plan-entitlement.test.ts \
+            tests/unit/quota-connection-recovery.test.ts \
+            tests/unit/credits-park-vs-credential-probe.test.ts \
+            tests/unit/glm-team-quota.test.ts \
+            tests/unit/glm-reset-card-cache.test.ts
+
+  image:
+    name: build runner-base image
+    needs: test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: fetch and verify patch
+        run: |
+          curl -fsSL --retry 3 -o /tmp/credits-park.patch "$PATCH_URL"
+          echo "$PATCH_SHA256  /tmp/credits-park.patch" | sha256sum -c -
+
+      - name: apply patch
+        run: |
+          git apply /tmp/credits-park.patch
+          grep -q "isGlmNoCodingPlanMessage" open-sse/services/usage/glm.ts
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          target: runner-base
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/omniroute:${{ github.event.inputs.image_tag || 'credits-park' }}
+          cache-from: type=gha,scope=runner-base
+          cache-to: type=gha,scope=runner-base,mode=max
+          provenance: false
